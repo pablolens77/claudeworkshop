@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -8,18 +8,15 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { id } = await params;
 
-  const tx = await prisma.transaction.findUnique({ where: { id } });
+  const { data: tx } = await supabase.from("Transaction").select("*").eq("id", id).single();
   if (!tx) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.$transaction([
-    prisma.transaction.delete({ where: { id } }),
-    prisma.account.update({
-      where: { id: tx.accountId },
-      data: {
-        balance: { increment: tx.direction === "IN" ? -Number(tx.amount) : Number(tx.amount) },
-      },
-    }),
-  ]);
+  await supabase.from("Transaction").delete().eq("id", id);
+
+  // Reverse the balance effect
+  const { data: account } = await supabase.from("Account").select("balance").eq("id", tx.accountId).single();
+  const delta = tx.direction === "IN" ? -Number(tx.amount) : Number(tx.amount);
+  await supabase.from("Account").update({ balance: Number(account!.balance) + delta }).eq("id", tx.accountId);
 
   return NextResponse.json({ success: true });
 }
